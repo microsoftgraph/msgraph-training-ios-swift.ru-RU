@@ -21,6 +21,11 @@
 
 ### <a name="configure-project-for-msal"></a>Настройка проекта для MSAL
 
+1. Добавьте новую группу цепочки ключей в возможности проекта.
+    1. Выберите проект **графтуториал** , а затем **подписывать & возможности**.
+    1. Выберите пункт **+ возможность**, а затем дважды щелкните **общий доступ к цепочке ключей**.
+    1. Добавьте группу цепочки ключей со значением `com.microsoft.adalcache`.
+
 1. Нажмите кнопку **info. plist** и выберите **Открыть как**, а затем **Исходный код**.
 1. Добавьте следующий `<dict>` элемент в элемент.
 
@@ -34,6 +39,7 @@
         </array>
       </dict>
     </array>
+    <key>LSApplicationQueriesSchemes</key>
     <array>
         <string>msauthv2</string>
         <string>msauthv3</string>
@@ -66,8 +72,11 @@
     ```Swift
     import Foundation
     import MSAL
+    import MSGraphClientSDK
 
-    class AuthenticationManager {
+    // Implement the MSAuthenticationProvider interface so
+    // this class can be used as an auth provider for the Graph SDK
+    class AuthenticationManager: NSObject, MSAuthenticationProvider {
 
         // Implement singleton pattern
         static let instance = AuthenticationManager()
@@ -76,7 +85,7 @@
         private let appId: String
         private let graphScopes: Array<String>
 
-        private init() {
+        private override init() {
             // Get app ID and scopes from AuthSettings.plist
             let bundle = Bundle.main
             let authConfigPath = bundle.path(forResource: "AuthSettings", ofType: "plist")!
@@ -87,21 +96,25 @@
 
             do {
                 // Create the MSAL client
-                try self.publicClient = MSALPublicClientApplication(clientId: self.appId,
-                                                                    keychainGroup: bundle.bundleIdentifier)
+                try self.publicClient = MSALPublicClientApplication(clientId: self.appId)
             } catch {
                 print("Error creating MSAL public client: \(error)")
                 self.publicClient = nil
             }
         }
 
-        public func getPublicClient() -> MSALPublicClientApplication? {
-            return self.publicClient
+        // Required function for the MSAuthenticationProvider interface
+        func getAccessToken(for authProviderOptions: MSAuthenticationProviderOptions!, andCompletion completion: ((String?, Error?) -> Void)!) {
+            getTokenSilently(completion: completion)
         }
 
-        public func getTokenInteractively(completion: @escaping(_ accessToken: String?, Error?) -> Void) {
+        public func getTokenInteractively(parentView: UIViewController, completion: @escaping(_ accessToken: String?, Error?) -> Void) {
+            let webParameters = MSALWebviewParameters(parentViewController: parentView)
+            let interactiveParameters = MSALInteractiveTokenParameters(scopes: self.graphScopes,
+                                                                       webviewParameters: webParameters)
+
             // Call acquireToken to open a browser so the user can sign in
-            publicClient?.acquireToken(forScopes: self.graphScopes, completionBlock: {
+            publicClient?.acquireToken(with: interactiveParameters, completionBlock: {
                 (result: MSALResult?, error: Error?) in
                 guard let tokenResult = result, error == nil else {
                     print("Error getting token interactively: \(String(describing: error))")
@@ -126,7 +139,8 @@
 
             if (userAccount != nil) {
                 // Attempt to get token silently
-                publicClient?.acquireTokenSilent(forScopes: self.graphScopes, account: userAccount!, completionBlock: {
+                let silentParameters = MSALSilentTokenParameters(scopes: self.graphScopes, account: userAccount!)
+                publicClient?.acquireTokenSilent(with: silentParameters, completionBlock: {
                     (result: MSALResult?, error: Error?) in
                     guard let tokenResult = result, error == nil else {
                         print("Error getting token silently: \(String(describing: error))")
@@ -140,7 +154,7 @@
             } else {
                 print("No account in cache")
                 completion(nil, NSError(domain: "AuthenticationManager",
-                                        code: MSALErrorCode.interactionRequired.rawValue, userInfo: nil))
+                                        code: MSALError.interactionRequired.rawValue, userInfo: nil))
             }
         }
 
@@ -201,7 +215,7 @@
             spinner.start(container: self)
 
             // Do an interactive sign in
-            AuthenticationManager.instance.getTokenInteractively {
+            AuthenticationManager.instance.getTokenInteractively(parentView: self) {
                 (token: String?, error: Error?) in
 
                 DispatchQueue.main.async {
@@ -246,16 +260,6 @@
 
 В этом разделе описывается создание вспомогательного класса для хранения всех вызовов Microsoft Graph и обновление `WelcomeViewController` для использования этого нового класса для получения пользователя, выполнившего вход в систему.
 
-1. Откройте **AuthenticationManager. SWIFT** и добавьте приведенную ниже функцию в `AuthenticationManager` класс.
-
-    ```Swift
-    public func getGraphAuthProvider() -> MSALAuthenticationProvider? {
-        // Create an MSAL auth provider for use with the Graph client
-        return MSALAuthenticationProvider(publicClientApplication: self.publicClient,
-                                          andScopes: self.graphScopes)
-    }
-    ```
-
 1. Создайте новый **файл SWIFT** в проекте **Графтуториал** с именем **графманажер. SWIFT**. Добавьте указанный ниже код в файл.
 
     ```Swift
@@ -271,7 +275,7 @@
         private let client: MSHTTPClient?
 
         private init() {
-            client = MSClientFactory.createHTTPClient(with: AuthenticationManager.instance.getGraphAuthProvider())
+            client = MSClientFactory.createHTTPClient(with: AuthenticationManager.instance)
         }
 
         public func getMe(completion: @escaping(MSGraphUser?, Error?) -> Void) {

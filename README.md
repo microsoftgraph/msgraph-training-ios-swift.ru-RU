@@ -8,19 +8,11 @@
 
 - [Руководство по Microsoft Graph для iOS](https://docs.microsoft.com/graph/tutorials/ios-swift)
 
-## <a name="demos"></a>Демонстрации
-
-Каталог [демонстрации](./demos) в этом репозитории содержит копии проекта, которые соответствуют выполнению отдельных разделов руководства. Если вы только захотите демонстрацию определенного раздела руководства, вы можете начать с версии, описанной в предыдущем разделе.
-
-- [01 — создание — приложение](demos/01-create-app): завершено [Создание приложения "SWIFT](https://docs.microsoft.com/graph/tutorials/ios-swift?tutorial-step=1) " для iOS
-- [02 – Add $ AAD – auth](demos/02-add-aad-auth): завершено [Добавление проверки подлинности для Azure AD](https://docs.microsoft.com/graph/tutorials/ios-swift?tutorial-step=3)
-- [03 – Add – msgraph](demos/03-add-msgraph): Completed [Получение данных календаря](https://docs.microsoft.com/graph/tutorials/ios-swift?tutorial-step=4)
-
 ## <a name="completed-sample"></a>Пример завершен
 
 Если вы только что создали полученный пример, выполнив следующую лабораторию, вы можете найти его здесь.
 
-- [Завершенный проект](demos/03-add-msgraph)
+- [Завершенный проект](demo)
 
 ## <a name="disclaimer"></a>Заявление об отказе
 

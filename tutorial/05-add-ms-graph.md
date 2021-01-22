@@ -1,21 +1,34 @@
 <!-- markdownlint-disable MD002 MD041 -->
 
-В этом упражнении вы добавите Microsoft Graph в приложение. Для этого приложения вы будете использовать [пакет SDK Microsoft Graph для задания](https://github.com/microsoftgraph/msgraph-sdk-objc) с, чтобы совершать вызовы в Microsoft Graph.
+В этом упражнении вы включаете Microsoft Graph в приложение. Для этого приложения для вызова Microsoft Graph используется [SDK Microsoft Graph](https://github.com/microsoftgraph/msgraph-sdk-objc) для Objective C.
 
-## <a name="get-calendar-events-from-outlook"></a>Получение событий календаря из Outlook
+## <a name="get-calendar-events-from-outlook"></a>Получить события календаря из Outlook
 
-В этом разделе описывается расширение `GraphManager` класса для добавления функции, позволяющей получить события и обновление `CalendarViewController` , чтобы использовать эти новые функции.
+В этом разделе мы расширим класс, чтобы добавить функцию для получения событий пользователя за текущую неделю, и обновим, чтобы `GraphManager` `CalendarViewController` использовать эти новые функции.
 
-1. Откройте **графманажер. SWIFT** и добавьте в `GraphManager` класс следующий метод.
+1. Откройте **GraphManager.swift** и добавьте в класс следующий `GraphManager` метод.
 
     ```Swift
-    public func getEvents(completion: @escaping(Data?, Error?) -> Void) {
-        // GET /me/events?$select='subject,organizer,start,end'$orderby=createdDateTime DESC
+    public func getCalendarView(viewStart: String,
+                                viewEnd: String,
+                                completion: @escaping(Data?, Error?) -> Void) {
+        // GET /me/calendarview
+        // Set start and end of the view
+        let start = "startDateTime=\(viewStart)"
+        let end = "endDateTime=\(viewEnd)"
         // Only return these fields in results
         let select = "$select=subject,organizer,start,end"
         // Sort results by when they were created, newest first
-        let orderBy = "$orderby=createdDateTime+DESC"
-        let eventsRequest = NSMutableURLRequest(url: URL(string: "\(MSGraphBaseURL)/me/events?\(select)&\(orderBy)")!)
+        let orderBy = "$orderby=start/dateTime"
+        // Request at most 25 results
+        let top = "$top=25"
+
+        let eventsRequest = NSMutableURLRequest(url: URL(string: "\(MSGraphBaseURL)/me/calendarview?\(start)&\(end)&\(select)&\(orderBy)&\(top)")!)
+
+        // Add the Prefer: outlook.timezone header to get start and end times
+        // in user's time zone
+        eventsRequest.addValue("outlook.timezone=\"\(self.userTimeZone)\"", forHTTPHeaderField: "Prefer")
+
         let eventsDataTask = MSURLSessionDataTask(request: eventsRequest, client: self.client, completion: {
             (data: Data?, response: URLResponse?, graphError: Error?) in
             guard let eventsData = data, graphError == nil else {
@@ -33,13 +46,22 @@
     ```
 
     > [!NOTE]
-    > Рассмотрите, какие действия `getEvents` выполняет код.
+    > Подумайте, что делает `getCalendarView` код.
     >
-    > - URL-адрес, который будет вызываться — это `/v1.0/me/events`.
-    > - Параметр `select` запроса позволяет ограничить поля, возвращаемые для каждого события, только теми, которые будут использоваться приложением.
-    > - Параметр `orderby` запроса сортирует результаты по дате и времени создания, начиная с самого последнего элемента.
+    > - Будет вызван URL-адрес `/v1.0/me/calendarview` .
+    >   - Параметры `startDateTime` `endDateTime` и параметры запроса определяют начало и конец представления календаря.
+    >   - Параметр запроса ограничивает поля, возвращаемые для каждого события, только теми, которые `select` будут фактически использовать представление.
+    >   - Параметр `orderby` запроса сортировать результаты по времени начала.
+    >   - Параметр `top` запроса запрашивает 25 результатов на страницу.
+    >   - Заглавная запись заставляет Microsoft Graph возвращать время начала и окончания каждого события в `Prefer: outlook.timezone` часовом поясе пользователя.
 
-1. Откройте **календарвиевконтроллер. SWIFT** и замените все его содержимое приведенным ниже кодом.
+1. Создайте новый **swift-файл** в **проекте GraphTutorial** **с именем GraphToIana.swift.** Добавьте указанный ниже код в файл.
+
+    :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/GraphToIana.swift" id="GraphToIanaSnippet":::
+
+    Это простой поиск идентификатора часового пояса IANA на основе имени часового пояса, возвращаемого Microsoft Graph.
+
+1. Откройте **CalendarViewController.swift** и замените его все содержимое следующим кодом.
 
     ```Swift
     import UIKit
@@ -57,11 +79,26 @@
             // Do any additional setup after loading the view.
             self.spinner.start(container: self)
 
-            GraphManager.instance.getEvents {
+            // Calculate the start and end of the current week
+            let timeZone = GraphToIana.getIanaIdentifier(graphIdentifer: GraphManager.instance.userTimeZone)
+            let now = Date()
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: timeZone)!
+
+            let startOfWeek = calendar.dateComponents([.calendar, .yearForWeekOfYear, .weekOfYear], from: now).date!
+            let endOfWeek = calendar.date(byAdding: .day, value: 7, to: startOfWeek)!
+
+            // Convert start and end to ISO 8601 strings
+            let isoFormatter = ISO8601DateFormatter()
+            let viewStart = isoFormatter.string(from: startOfWeek)
+            let viewEnd = isoFormatter.string(from: endOfWeek)
+
+            GraphManager.instance.getCalendarView(viewStart: viewStart, viewEnd: viewEnd) {
                 (data: Data?, error: Error?) in
                 DispatchQueue.main.async {
                     self.spinner.stop()
 
+                    // TEMPORARY
                     guard let eventsData = data, error == nil else {
                         self.calendarJSON.text = error.debugDescription
                         return
@@ -76,57 +113,85 @@
     }
     ```
 
-Теперь вы можете запустить приложение, войти и нажать в меню элемент Навигация по **календарю** . В приложении должен появиться дамп JSON событий.
+Теперь вы можете запустить приложение, войти и к пункту навигации **"Календарь"** в меню. В приложении должен отыменить дамп событий в JSON.
 
 ## <a name="display-the-results"></a>Отображение результатов
 
-Теперь вы можете заменить дамп JSON на какой-то способ отобразить результаты в удобном для пользователя виде. В этом разделе будет изменена `getEvents` функция, возвращающая строго типизированные объекты, и изменено `CalendarViewController` , чтобы использовать представление таблицы для отображения событий.
+Теперь вы можете заменить дамп JSON на что-то, чтобы отобразить результаты в удобном для пользователя виде. В этом разделе вы измените функцию, чтобы она возвращала строго типные объекты, и измените для отображения событий представление `getCalendarView` `CalendarViewController` таблицы.
 
-1. Откройте **графманажер. SWIFT**. Замените имеющуюся функцию `getEvents` указанным ниже кодом.
+1. Откройте **GraphManager.swift.** Замените имеющуюся функцию `getCalendarView` указанным ниже кодом.
 
-    :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/GraphManager.swift" id="GetEventsSnippet" highlight="1,17-38":::
+    :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/GraphManager.swift" id="GetEventsSnippet" highlight="3,28-49":::
 
-1. Создайте новый файл **класса Touch Cocoa** в проекте **графтуториал** с именем `CalendarTableViewCell.swift`. Выберите **уитаблевиевцелл** в **подклассе** поля.
+1. Создайте новый файл **класса Cocoa Touch в** **проекте GraphTutorial** с именем `CalendarTableViewController.swift` . Выберите **UITableViewController** в **подклассе** поля.
 
-1. Откройте **календартаблевиевцелл. SWIFT** и добавьте в `CalendarTableViewCell` класс приведенный ниже код.
+1. Откройте **CalendarTableViewController.swift** и замените его содержимое на следующее.
+
+    :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/CalendarTableViewController.swift" id="CalendarTableViewControllerSnippet":::
+
+1. Создайте новый файл **класса Cocoa Touch в** **проекте GraphTutorial** с именем `CalendarTableViewCell.swift` . Выберите **UITableViewCell** в **подклассе** поля.
+
+1. Откройте **CalendarTableViewCell.swift** и добавьте в класс следующие `CalendarTableViewCell` свойства.
 
     :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/CalendarTableViewCell.swift" id="PropertiesSnippet":::
 
-1. Откройте файл **Main. Storyboard** и перейдите к **сцене календаря**. Выберите **представление** в **сцене календаря** и удалите его.
+1. Откройте **main.storyboard и** найдите **сцену календаря.** Удалите представление прокрутки из корневого представления.
+1. С помощью **библиотеки добавьте** в **верхнюю** часть представления панели навигации.
+1. Дважды щелкните **заголовок** на панели навигации и обновите его до `Calendar` .
+1. С помощью **библиотеки добавьте** элемент кнопки **панели** в правую часть панели навигации.
+1. Выберите новую кнопку панели, а затем — **инспектор атрибутов.** Измените **изображение** на **"плюс"**.
+1. Добавьте представление **контейнера** из **библиотеки в** представление под панели навигации. Измейте представление контейнера, чтобы занять все оставшееся место в представлении.
+1. Установите ограничения для панели навигации и представления контейнера следующим образом.
 
-    ![Снимок экрана с представлением в сцене календаря](./images/view-in-calendar-scene.png)
+    - **Панель навигации**
+        - Добавить ограничение: высота, значение: 44
+        - Add constraint: Leading space to Safe Area, value: 0
+        - Добавление ограничения: после пробела в безопасную область, значение: 0
+        - Add constraint: Top space to Safe Area, value: 0
+    - **Представление контейнера**
+        - Add constraint: Leading space to Safe Area, value: 0
+        - Добавление ограничения: после пробела в безопасную область, значение: 0
+        - Добавление ограничения: верхнее место на панели навигации снизу, значение: 0
+        - Добавление ограничения: нижнее пространство в безопасной области, значение: 0
 
-1. Добавьте **представление таблицы** из **библиотеки** в **сцену в календаре**.
-1. Выберите представление таблицы, а затем выберите **инспектор атрибутов**. Задайте для **ячеек прототипа** значение **1**.
-1. Используйте **библиотеку** , чтобы добавить три **метки** к ячейке прототипа.
-1. Выберите ячейку прототип, а затем выберите **инспектор удостоверений**. Замените **Class** на **календартаблевиевцелл**.
-1. Выберите **инспектор атрибутов** и **идентификатор** набора `EventCell`.
-1. Выбрав **евентцелл** , выберите **инспектор подключений** и подключение `durationLabel`, `organizerLabel`а `subjectLabel` также метки, добавленные в ячейку в раскадровке.
-1. Задайте свойства и ограничения для этих трех меток, как показано ниже.
+1. Найдите второй контроллер представления, добавленный в storyboard при добавлении представления контейнера. Он подключается к сцене **календаря** с помощью встраиваемой segue. Выберите этот контроллер и используйте **identity Inspector,** чтобы изменить **класс** на **CalendarTableViewController.**
+1. Удалите **представление** из **контроллера представления таблицы календаря.**
+1. Добавьте представление **таблицы** из **библиотеки в** контроллер **представления таблицы календаря.**
+1. Выберите представление таблицы, а затем выберите **инспектор атрибутов.** Установите **для прототипа ячеек** **1**.
+1. Перетащите нижний край прототипа ячейки, чтобы предоставить вам большую область для работы.
+1. Используйте **библиотеку,** чтобы добавить три **метки в** прототип ячейки.
+1. Выберите прототип ячейки, а затем выберите **identity Inspector.** Измените **класс** **на CalendarTableViewCell.**
+1. Выберите **"Attributes Inspector"** (Инспектор атрибутов) и за **установите для идентификатора (Identifier)** `EventCell` (Идентификатор).
+1. Выбрав **EventCell,** выберите **Connections Inspector** и подключите его, а также метки, добавленные в ячейку `durationLabel` в `organizerLabel` `subjectLabel` storyboard.
+1. Установите свойства и ограничения для трех меток следующим образом.
 
     - **Метка темы**
-        - Добавить ограничение: начальное пространство в представлении содержимого начальное поле, значение: 0
-        - Add Constraint: замыкающий пробел для конечного поля представления содержимого, значение: 0
-        - Добавить ограничение: Верхняя область для представления контента верхнее поле, значение: 0
-    - **Метка "Организатор"**
-        - Шрифт: System 12,0
-        - Добавить ограничение: начальное пространство в представлении содержимого начальное поле, значение: 0
-        - Add Constraint: замыкающий пробел для конечного поля представления содержимого, значение: 0
-        - Добавление ограничения: Верхняя область для подписи темы внизу, значение: Standard
+        - Add constraint: Leading space to Content View Leading Margin, value: 0
+        - Добавление ограничения: в окн. место в поле "Точка с представлением содержимого", значение: 0
+        - Add constraint: Top space to Content View Top Margin, value: 0
+    - **Метка организатора**
+        - Шрифт: System 12.0
+        - Добавить ограничение: высота, значение: 15
+        - Add constraint: Leading space to Content View Leading Margin, value: 0
+        - Добавление ограничения: в окн. место в поле "Точка с представлением содержимого", значение: 0
+        - Add constraint: Top space to Subject Label Bottom, value: Standard
     - **Метка длительности**
-        - Шрифт: System 12,0
+        - Шрифт: System 12.0
         - Цвет: темно-серый цвет
-        - Добавить ограничение: начальное пространство в представлении содержимого начальное поле, значение: 0
-        - Add Constraint: замыкающий пробел для конечного поля представления содержимого, значение: 0
-        - Добавить ограничение: Верхняя область для метки организатора внизу, значение: Standard
-        - Добавить ограничение: нижнее пространство для представления содержимого нижнее поле, значение: 8
+        - Добавить ограничение: высота, значение: 15
+        - Add constraint: Leading space to Content View Leading Margin, value: 0
+        - Добавление ограничения: в окн. место в поле "Точка с представлением содержимого", значение: 0
+        - Add constraint: Top space to Organizer Label Bottom, value: Standard
+        - Добавление ограничения: нижнее пространство для нижнего поля представления содержимого, значение: 0
 
-    ![Снимок экрана с макетом ячеек прототипа](./images/prototype-cell-layout.png)
+1. Выберите **EventCell,** а затем выберите **инспектор размеров.** Включить **автоматически для** **высоты строки.**
 
-1. Откройте **календарвиевконтроллер. SWIFT** и замените его содержимое приведенным ниже кодом.
+    ![Снимок экрана: контроллеры представления таблиц календаря и календаря](images/calendar-table-storyboard.png)
+
+1. Откройте **CalendarViewController.swift** и замените его содержимое следующим кодом.
 
     :::code language="swift" source="../demo/GraphTutorial/GraphTutorial/CalendarViewController.swift" id="CalendarViewSnippet":::
 
-1. Запустите приложение и войдите в систему, а затем коснитесь вкладки **Календарь** . Вы должны увидеть список событий.
+1. Запустите приложение, во войти и коснитесь вкладки **"Календарь".** Должен отлиться список событий.
 
-    ![Снимок экрана с таблицей событий](./images/calendar-list.png)
+    ![Снимок экрана с таблицей событий](images/calendar-list.png)
